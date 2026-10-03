@@ -69,11 +69,15 @@ def _crear_logger(nombre: str, log_file: Path) -> logging.Logger:
     fh.setFormatter(fmt)
     logger.addHandler(fh)
 
-    # Handler consola con manejo de encoding
-    ch = logging.StreamHandler(
-        open(sys.stdout.fileno(), mode="w",
-             encoding="utf-8", buffering=1, errors="replace")
-    )
+    # Handler consola: compatible con terminal Y con Jupyter (IPyKernel)
+    try:
+        import io as _io
+        _stream = open(sys.stdout.fileno(), mode="w",
+                       encoding="utf-8", buffering=1, errors="replace")
+    except (AttributeError, _io.UnsupportedOperation):
+        # En Jupyter, sys.stdout es un OutStream sin fileno() real
+        _stream = sys.stdout
+    ch = logging.StreamHandler(_stream)
     ch.setFormatter(fmt)
     logger.addHandler(ch)
 
