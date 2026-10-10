@@ -1,0 +1,59 @@
+2026-10-10 07:27:05 | INFO     | ============================================================
+2026-10-10 07:27:06 | INFO     |  CLASE TRANSFORMACION - Inicializada
+2026-10-10 07:27:06 | INFO     |  Archivo de log: transformacion_20261010_072705.log
+2026-10-10 07:27:06 | INFO     | ============================================================
+2026-10-10 07:27:06 | INFO     | ============================================================
+2026-10-10 07:27:06 | INFO     |  INICIANDO PROCESO GLOBAL DE TRANSFORMACION
+2026-10-10 07:27:06 | INFO     | ============================================================
+2026-10-10 07:27:06 | INFO     | 
+==================================================
+2026-10-10 07:27:06 | INFO     |  TRANSFORMANDO: LISTINGS
+2026-10-10 07:27:06 | INFO     | ==================================================
+2026-10-10 07:27:06 | INFO     | Registros iniciales: 19,187 | Columnas: 90
+2026-10-10 07:27:06 | INFO     | [listings] 0 duplicados encontrados por 'id'.
+2026-10-10 07:27:06 | INFO     | [listings] Columnas eliminadas por alto % de nulos: ['neighbourhood_group_cleansed', 'license', 'calendar_updated']
+2026-10-10 07:27:06 | INFO     | [listings] Normalizando campo 'price'...
+2026-10-10 07:27:07 | INFO     | [listings] Precio limpio - Mediana: $161,460.00 COP | Nulos: 195
+2026-10-10 07:27:07 | INFO     | [listings] Cuartiles de precio para categorización: Q25=$110,000, Q50=$161,460, Q75=$230,346
+2026-10-10 07:27:07 | INFO     | [listings] Distribución categorización precio:
+price_category
+Medio              4751
+Alto               4749
+Lujo               4748
+Económico          4744
+No especificado     195
+2026-10-10 07:27:07 | INFO     | [listings] Desanidando y contando amenities...
+2026-10-10 07:27:07 | INFO     | [listings] Promedio de amenidades por listing: 26.4
+2026-10-10 07:27:07 | INFO     | [listings] Fechas estandarizadas a YYYY-MM-DD y variables temporales derivadas.
+2026-10-10 07:27:07 | INFO     | [listings] Transformación completada: 19,187 filas × 94 columnas.
+2026-10-10 07:27:07 | INFO     | 
+==================================================
+2026-10-10 07:27:07 | INFO     |  TRANSFORMANDO: REVIEWS
+2026-10-10 07:27:07 | INFO     | ==================================================
+2026-10-10 07:27:07 | INFO     | Registros iniciales: 527,731 | Columnas: 6
+2026-10-10 07:27:07 | INFO     | [reviews] 0 duplicados encontrados.
+2026-10-10 07:27:08 | INFO     | [reviews] Transformación completada: 527,731 filas × 12 columnas.
+2026-10-10 07:27:08 | INFO     | 
+==================================================
+2026-10-10 07:27:08 | INFO     |  TRANSFORMANDO: CALENDAR
+2026-10-10 07:27:08 | INFO     | ==================================================
+2026-10-10 07:27:08 | INFO     | Registros iniciales: 500,000 | Columnas: 5
+2026-10-10 07:27:08 | INFO     | [calendar] 0 duplicados encontrados por (listing_id, date).
+2026-10-10 07:27:09 | INFO     | [calendar] Transformación completada: 500,000 filas × 11 columnas.
+2026-10-10 07:27:09 | INFO     | [calendar] Agrupando y resumiendo calendario por año y mes...
+2026-10-10 07:27:09 | INFO     | [calendar] Resumen mensual generado: 13 meses analizados.
+2026-10-10 07:27:09 | INFO     | 
+============================================================
+2026-10-10 07:27:09 | INFO     |  RESUMEN FINAL DE TRANSFORMACION
+2026-10-10 07:27:09 | INFO     | ============================================================
+2026-10-10 07:27:09 | INFO     |   ✓ listings    :     19,187 registros |  94 columnas
+2026-10-10 07:27:09 | INFO     |   ✓ reviews     :    527,731 registros |  12 columnas
+2026-10-10 07:27:09 | INFO     |   ✓ calendar    :    500,000 registros |  11 columnas
+2026-10-10 07:27:09 | INFO     |   ✓ calendar_summary:         13 registros |   6 columnas
+2026-10-10 07:27:09 | INFO     |   Tiempo total: 2.71s
+2026-10-10 07:27:09 | INFO     | ============================================================
+2026-10-10 07:27:09 | INFO     | Guardando DataFrames transformados en data/processed/...
+2026-10-10 07:27:11 | INFO     |   Saved: listings_clean.csv (50.2 MB)
+2026-10-10 07:27:15 | INFO     |   Saved: reviews_clean.csv (123.9 MB)
+2026-10-10 07:27:16 | INFO     |   Saved: calendar_clean.csv (23.5 MB)
+2026-10-10 07:27:16 | INFO     |   Saved: calendar_summary_clean.csv (0.0 MB)

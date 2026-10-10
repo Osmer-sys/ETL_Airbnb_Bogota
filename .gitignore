@@ -23,6 +23,8 @@ logs/*.txt
 # Datos procesados (regenerables)
 data/processed/
 data/exports/
+*.db
+*.docx
 
 # PyCharm / VSCode
 .idea/

@@ -9,11 +9,11 @@
 Descripción:
     Módulo de Carga (L) del pipeline ETL.
     Implementa la clase Carga que:
-    1. Establece conexión a SQL Server (Database: AirbnbBogota).
+    1. Establece conexión a SQLite (archivo: data/airbnb_bogota.db).
     2. Crea las tablas relacionales con tipos de datos adecuados,
        claves primarias (PK), claves foráneas (FK) e índices.
-    3. Carga los DataFrames limpios en las tablas de SQL Server
-       utilizando inserción por lotes de alto rendimiento (fast_executemany).
+    3. Carga los DataFrames limpios en las tablas de SQLite
+       utilizando inserción por lotes.
     4. Exporta los conjuntos de datos limpios a archivos XLSX estructurados.
     5. Registra en un archivo de log cada paso del proceso, número
        de registros insertados por tabla, tiempos y posibles alertas.
@@ -23,15 +23,13 @@ Descripción:
 import os
 import sys
 import logging
-import urllib
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 
 import pandas as pd
 import numpy as np
-import pyodbc
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, event
 from sqlalchemy.engine import Engine
 from dotenv import load_dotenv
 
@@ -42,6 +40,7 @@ load_dotenv(BASE_DIR / ".env")
 LOGS_DIR = BASE_DIR / "logs"
 EXPORTS_DIR = BASE_DIR / "data" / "exports"
 PROCESSED_DIR = BASE_DIR / "data" / "processed"
+DEFAULT_SQLITE_PATH = BASE_DIR / "data" / "airbnb_bogota.db"
 
 LOGS_DIR.mkdir(exist_ok=True)
 EXPORTS_DIR.mkdir(exist_ok=True)
@@ -84,76 +83,70 @@ class Carga:
 
     Responsabilidades:
     ------------------
-    - Gestionar la conexión a SQL Server mediante SQLAlchemy y pyodbc.
+    - Gestionar la conexión a SQLite mediante SQLAlchemy.
     - Definir y ejecutar el esquema DDL relacional (tablas, PK, FK, índices).
-    - Cargar DataFrames limpios a SQL Server con soporte de fast_executemany.
+    - Cargar DataFrames limpios a SQLite por lotes.
     - Exportar datos analíticos a archivos Excel (.xlsx).
     - Registrar métricas de inserción en log por cada ejecución.
     """
 
     def __init__(
         self,
-        server: Optional[str] = None,
-        database: Optional[str] = None,
-        driver: Optional[str] = None,
-        trusted_connection: str = "yes",
+        sqlite_path: Optional[str | Path] = None,
+        **kwargs,
     ):
-        """Inicializa la clase Carga con las configuraciones de conexión."""
-        self.server = server or os.getenv("SQL_SERVER", "localhost")
-        self.database = database or os.getenv("SQL_DATABASE", "AirbnbBogota")
-        self.driver = driver or os.getenv("SQL_DRIVER", "ODBC Driver 18 for SQL Server")
-        self.trusted_connection = trusted_connection
+        """Inicializa la clase Carga con la ruta del archivo SQLite."""
+        raw_path = sqlite_path or os.getenv("SQLITE_PATH", str(DEFAULT_SQLITE_PATH))
+        self.sqlite_path = Path(raw_path)
+        if not self.sqlite_path.is_absolute():
+            self.sqlite_path = BASE_DIR / self.sqlite_path
+        self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
 
         self.engine: Optional[Engine] = None
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.log_file = LOGS_DIR / f"carga_sqlserver_{timestamp}.log"
+        self.log_file = LOGS_DIR / f"carga_sqlite_{timestamp}.log"
         self.log = _crear_logger(f"Carga_{timestamp}", self.log_file)
 
         self.log.info("=" * 60)
         self.log.info(" CLASE CARGA - Inicializada")
-        self.log.info(f" Servidor    : {self.server}")
-        self.log.info(f" Base Datos  : {self.database}")
-        self.log.info(f" Driver ODBC : {self.driver}")
+        self.log.info(f" Motor       : SQLite")
+        self.log.info(f" Archivo DB  : {self.sqlite_path}")
         self.log.info(f" Archivo Log : {self.log_file.name}")
         self.log.info("=" * 60)
 
     # ──────────────────────────────────────────────────────────
-    # Conexión a SQL Server
+    # Conexión a SQLite
     # ──────────────────────────────────────────────────────────
     def conectar(self) -> bool:
         """
-        Establece conexión a SQL Server usando SQLAlchemy y pyodbc.
-        Habilita fast_executemany para rendimiento óptimo.
+        Establece conexión a SQLite usando SQLAlchemy.
+        Activa el enforcement de claves foráneas (PRAGMA foreign_keys=ON).
         """
-        self.log.info("Conectando a SQL Server...")
+        self.log.info("Conectando a SQLite...")
         try:
-            params = urllib.parse.quote_plus(
-                f"DRIVER={{{self.driver}}};"
-                f"SERVER={self.server};"
-                f"DATABASE={self.database};"
-                f"Trusted_Connection={self.trusted_connection};"
-                "TrustServerCertificate=yes;"
-            )
-            conn_url = f"mssql+pyodbc:///?odbc_connect={params}"
-
             self.engine = create_engine(
-                conn_url,
-                fast_executemany=True,
+                f"sqlite:///{self.sqlite_path}",
                 pool_pre_ping=True,
             )
 
+            @event.listens_for(self.engine, "connect")
+            def _fk_pragma(dbapi_connection, connection_record):
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.close()
+
             # Prueba de consulta
             with self.engine.connect() as conn:
-                version = conn.execute(text("SELECT @@VERSION")).scalar()
-                db_name = conn.execute(text("SELECT DB_NAME()")).scalar()
-                self.log.info(f"Conexión exitosa a SQL Server!")
-                self.log.info(f"  Versión: {version.splitlines()[0]}")
-                self.log.info(f"  Base de datos activa: {db_name}")
+                version = conn.execute(text("SELECT sqlite_version()")).scalar()
+                conn.execute(text("PRAGMA foreign_keys=ON"))
+                self.log.info("Conexión exitosa a SQLite!")
+                self.log.info(f"  Versión: {version}")
+                self.log.info(f"  Archivo activo: {self.sqlite_path.name}")
             return True
 
         except Exception as exc:
-            self.log.error(f"Error al conectar con SQL Server: {exc}")
+            self.log.error(f"Error al conectar con SQLite: {exc}")
             return False
 
     def desconectar(self) -> None:
@@ -161,116 +154,121 @@ class Carga:
         if self.engine:
             self.engine.dispose()
             self.engine = None
-            self.log.info("Conexión a SQL Server cerrada.")
+            self.log.info("Conexión a SQLite cerrada.")
 
     # ──────────────────────────────────────────────────────────
     # Creación de Tablas (DDL)
     # ──────────────────────────────────────────────────────────
     def crear_tablas(self) -> None:
         """
-        Crea las tablas relacionales en SQL Server con Primary Keys,
+        Crea las tablas relacionales en SQLite con Primary Keys,
         Foreign Keys e índices de optimización.
         """
         if self.engine is None:
-            raise RuntimeError("No hay conexión activa a SQL Server. Llama primero a conectar().")
+            raise RuntimeError("No hay conexión activa a SQLite. Llama primero a conectar().")
 
-        self.log.info("Creando estructura de tablas en SQL Server...")
+        self.log.info("Creando estructura de tablas en SQLite...")
 
-        ddl_script = """
-        -- 1. Tabla Listings
-        IF OBJECT_ID('dbo.calendar', 'U') IS NOT NULL DROP TABLE dbo.calendar;
-        IF OBJECT_ID('dbo.reviews', 'U') IS NOT NULL DROP TABLE dbo.reviews;
-        IF OBJECT_ID('dbo.calendar_summary', 'U') IS NOT NULL DROP TABLE dbo.calendar_summary;
-        IF OBJECT_ID('dbo.listings', 'U') IS NOT NULL DROP TABLE dbo.listings;
+        ddl_statements = [
+            "DROP TABLE IF EXISTS calendar;",
+            "DROP TABLE IF EXISTS reviews;",
+            "DROP TABLE IF EXISTS calendar_summary;",
+            "DROP TABLE IF EXISTS listings;",
 
-        CREATE TABLE dbo.listings (
-            id                          BIGINT PRIMARY KEY,
-            name                        NVARCHAR(500),
-            host_id                     BIGINT,
-            host_name                   NVARCHAR(250),
-            host_since                  DATE,
-            host_is_superhost           BIT,
-            neighbourhood_cleansed      NVARCHAR(150),
-            latitude                    FLOAT,
-            longitude                   FLOAT,
-            property_type               NVARCHAR(100),
-            room_type                   NVARCHAR(50),
-            accommodates                INT,
-            bathrooms                   FLOAT,
-            bedrooms                    INT,
-            beds                        INT,
-            price                       FLOAT,
-            price_category              NVARCHAR(50),
-            minimum_nights              INT,
-            maximum_nights              INT,
-            availability_365            INT,
-            number_of_reviews           INT,
-            review_scores_rating        FLOAT,
-            n_amenities                 INT,
-            host_since_year             INT
-        );
+            """
+            CREATE TABLE listings (
+                id                          INTEGER PRIMARY KEY,
+                name                        TEXT,
+                host_id                     INTEGER,
+                host_name                   TEXT,
+                host_since                  TEXT,
+                host_is_superhost           INTEGER,
+                neighbourhood_cleansed      TEXT,
+                latitude                    REAL,
+                longitude                   REAL,
+                property_type               TEXT,
+                room_type                   TEXT,
+                accommodates                INTEGER,
+                bathrooms                   REAL,
+                bedrooms                    INTEGER,
+                beds                        INTEGER,
+                price                       REAL,
+                price_category              TEXT,
+                minimum_nights              INTEGER,
+                maximum_nights              INTEGER,
+                availability_365            INTEGER,
+                number_of_reviews           INTEGER,
+                review_scores_rating        REAL,
+                n_amenities                 INTEGER,
+                host_since_year             INTEGER
+            )
+            """,
 
-        -- 2. Tabla Reviews (con Foreign Key a Listings)
-        CREATE TABLE dbo.reviews (
-            id                          BIGINT PRIMARY KEY,
-            listing_id                  BIGINT NOT NULL,
-            date                        DATE,
-            reviewer_id                 BIGINT,
-            reviewer_name               NVARCHAR(250),
-            comments                    NVARCHAR(MAX),
-            year                        INT,
-            month                       INT,
-            day                         INT,
-            quarter                     INT,
-            is_weekend                  INT,
-            CONSTRAINT FK_reviews_listings FOREIGN KEY (listing_id) REFERENCES dbo.listings(id)
-        );
+            """
+            CREATE TABLE reviews (
+                id                          INTEGER PRIMARY KEY,
+                listing_id                  INTEGER NOT NULL,
+                date                        TEXT,
+                reviewer_id                 INTEGER,
+                reviewer_name               TEXT,
+                comments                    TEXT,
+                year                        INTEGER,
+                month                       INTEGER,
+                day                         INTEGER,
+                quarter                     INTEGER,
+                is_weekend                  INTEGER,
+                CONSTRAINT FK_reviews_listings FOREIGN KEY (listing_id) REFERENCES listings(id)
+            )
+            """,
 
-        -- 3. Tabla Calendar (con Foreign Key a Listings)
-        CREATE TABLE dbo.calendar (
-            listing_id                  BIGINT NOT NULL,
-            date                        DATE NOT NULL,
-            is_available                BIT,
-            minimum_nights              INT,
-            maximum_nights              INT,
-            year                        INT,
-            month                       INT,
-            week                        INT,
-            quarter                     INT,
-            day_of_week                 INT,
-            CONSTRAINT PK_calendar PRIMARY KEY (listing_id, date),
-            CONSTRAINT FK_calendar_listings FOREIGN KEY (listing_id) REFERENCES dbo.listings(id)
-        );
+            """
+            CREATE TABLE calendar (
+                listing_id                  INTEGER NOT NULL,
+                date                        TEXT NOT NULL,
+                is_available                INTEGER,
+                minimum_nights              INTEGER,
+                maximum_nights              INTEGER,
+                year                        INTEGER,
+                month                       INTEGER,
+                week                        INTEGER,
+                quarter                     INTEGER,
+                day_of_week                 INTEGER,
+                CONSTRAINT PK_calendar PRIMARY KEY (listing_id, date),
+                CONSTRAINT FK_calendar_listings FOREIGN KEY (listing_id) REFERENCES listings(id)
+            )
+            """,
 
-        -- 4. Tabla Calendar Summary (agregación mensual)
-        CREATE TABLE dbo.calendar_summary (
-            year                        INT NOT NULL,
-            month                       INT NOT NULL,
-            total_dias                  INT,
-            dias_disponibles            INT,
-            disponibilidad_pct          FLOAT,
-            noches_minimas_prom         FLOAT,
-            CONSTRAINT PK_calendar_summary PRIMARY KEY (year, month)
-        );
+            """
+            CREATE TABLE calendar_summary (
+                year                        INTEGER NOT NULL,
+                month                       INTEGER NOT NULL,
+                total_dias                  INTEGER,
+                dias_disponibles            INTEGER,
+                disponibilidad_pct          REAL,
+                noches_minimas_prom         REAL,
+                CONSTRAINT PK_calendar_summary PRIMARY KEY (year, month)
+            )
+            """,
 
-        -- Índices para optimización de consultas
-        CREATE NONCLUSTERED INDEX IX_listings_neighbourhood ON dbo.listings(neighbourhood_cleansed);
-        CREATE NONCLUSTERED INDEX IX_listings_room_type ON dbo.listings(room_type);
-        CREATE NONCLUSTERED INDEX IX_listings_price ON dbo.listings(price);
-        CREATE NONCLUSTERED INDEX IX_reviews_listing_date ON dbo.reviews(listing_id, date);
-        CREATE NONCLUSTERED INDEX IX_calendar_date ON dbo.calendar(date);
-        """
+            "CREATE INDEX IF NOT EXISTS IX_listings_neighbourhood ON listings(neighbourhood_cleansed);",
+            "CREATE INDEX IF NOT EXISTS IX_listings_room_type ON listings(room_type);",
+            "CREATE INDEX IF NOT EXISTS IX_listings_price ON listings(price);",
+            "CREATE INDEX IF NOT EXISTS IX_reviews_listing_date ON reviews(listing_id, date);",
+            "CREATE INDEX IF NOT EXISTS IX_calendar_date ON calendar(date);",
+        ]
 
         with self.engine.begin() as conn:
-            conn.execute(text(ddl_script))
+            conn.execute(text("PRAGMA foreign_keys=ON"))
+            for stmt in ddl_statements:
+                conn.execute(text(stmt))
 
-        self.log.info("Tablas e índices creados exitosamente en SQL Server.")
+        self.log.info("Tablas e índices creados exitosamente en SQLite.")
 
     # ──────────────────────────────────────────────────────────
-    # Carga de Datos a SQL Server
+    # Carga de Datos a SQLite
     # ──────────────────────────────────────────────────────────
     def cargar_listings(self, df_listings: pd.DataFrame) -> int:
-        """Carga el DataFrame de listings en la tabla dbo.listings."""
+        """Carga el DataFrame de listings en la tabla listings."""
         cols_map = {
             "id": "id",
             "name": "name",
@@ -301,28 +299,27 @@ class Carga:
         cols_exist = [c for c in cols_map.keys() if c in df_listings.columns]
         df_sql = df_listings[cols_exist].rename(columns=cols_map).copy()
 
-        # Ajuste de tipos
+        # Ajuste de tipos (SQLite guarda booleanos como 0/1)
         if "host_is_superhost" in df_sql.columns:
-            df_sql["host_is_superhost"] = df_sql["host_is_superhost"].fillna(False).astype(bool)
+            df_sql["host_is_superhost"] = df_sql["host_is_superhost"].fillna(False).astype(bool).astype(int)
 
-        self.log.info(f"[dbo.listings] Iniciando carga de {len(df_sql):,} registros...")
+        self.log.info(f"[listings] Iniciando carga de {len(df_sql):,} registros...")
         t0 = datetime.now()
 
         df_sql.to_sql(
             "listings",
             con=self.engine,
-            schema="dbo",
             if_exists="append",
             index=False,
             chunksize=2000,
         )
 
         elapsed = (datetime.now() - t0).total_seconds()
-        self.log.info(f"[dbo.listings] Carga completada: {len(df_sql):,} registros insertados en {elapsed:.2f}s")
+        self.log.info(f"[listings] Carga completada: {len(df_sql):,} registros insertados en {elapsed:.2f}s")
         return len(df_sql)
 
     def cargar_reviews(self, df_reviews: pd.DataFrame, batch_size: int = 25000) -> int:
-        """Carga el DataFrame de reviews en la tabla dbo.reviews."""
+        """Carga el DataFrame de reviews en la tabla reviews."""
         cols_needed = [
             "id", "listing_id", "date", "reviewer_id", "reviewer_name",
             "comments", "year", "month", "day", "quarter", "is_weekend"
@@ -335,7 +332,7 @@ class Carga:
             df_sql["comments"] = df_sql["comments"].astype(str).str.slice(0, 4000)
 
         total_filas = len(df_sql)
-        self.log.info(f"[dbo.reviews] Iniciando carga de {total_filas:,} registros (por lotes de {batch_size:,})...")
+        self.log.info(f"[reviews] Iniciando carga de {total_filas:,} registros (por lotes de {batch_size:,})...")
         t0 = datetime.now()
 
         insertados = 0
@@ -344,20 +341,19 @@ class Carga:
             chunk.to_sql(
                 "reviews",
                 con=self.engine,
-                schema="dbo",
                 if_exists="append",
                 index=False,
-                chunksize=2000,
+                chunksize=500,
             )
             insertados += len(chunk)
-            self.log.info(f"  [dbo.reviews] Progreso: {insertados:,} / {total_filas:,} registros")
+            self.log.info(f"  [reviews] Progreso: {insertados:,} / {total_filas:,} registros")
 
         elapsed = (datetime.now() - t0).total_seconds()
-        self.log.info(f"[dbo.reviews] Carga completada: {insertados:,} registros en {elapsed:.2f}s")
+        self.log.info(f"[reviews] Carga completada: {insertados:,} registros en {elapsed:.2f}s")
         return insertados
 
     def cargar_calendar(self, df_calendar: pd.DataFrame, batch_size: int = 50000) -> int:
-        """Carga el DataFrame de calendar en dbo.calendar."""
+        """Carga el DataFrame de calendar en calendar."""
         cols_needed = [
             "listing_id", "date", "is_available", "minimum_nights",
             "maximum_nights", "year", "month", "week", "quarter", "day_of_week"
@@ -366,10 +362,10 @@ class Carga:
         df_sql = df_calendar[cols_exist].copy()
 
         if "is_available" in df_sql.columns:
-            df_sql["is_available"] = df_sql["is_available"].fillna(False).astype(bool)
+            df_sql["is_available"] = df_sql["is_available"].fillna(False).astype(bool).astype(int)
 
         total_filas = len(df_sql)
-        self.log.info(f"[dbo.calendar] Iniciando carga de {total_filas:,} registros (por lotes de {batch_size:,})...")
+        self.log.info(f"[calendar] Iniciando carga de {total_filas:,} registros (por lotes de {batch_size:,})...")
         t0 = datetime.now()
 
         insertados = 0
@@ -378,29 +374,27 @@ class Carga:
             chunk.to_sql(
                 "calendar",
                 con=self.engine,
-                schema="dbo",
                 if_exists="append",
                 index=False,
-                chunksize=5000,
+                chunksize=500,
             )
             insertados += len(chunk)
-            self.log.info(f"  [dbo.calendar] Progreso: {insertados:,} / {total_filas:,} registros")
+            self.log.info(f"  [calendar] Progreso: {insertados:,} / {total_filas:,} registros")
 
         elapsed = (datetime.now() - t0).total_seconds()
-        self.log.info(f"[dbo.calendar] Carga completada: {insertados:,} registros en {elapsed:.2f}s")
+        self.log.info(f"[calendar] Carga completada: {insertados:,} registros en {elapsed:.2f}s")
         return insertados
 
     def cargar_calendar_summary(self, df_summary: pd.DataFrame) -> int:
-        """Carga el resumen mensual de calendario en dbo.calendar_summary."""
-        self.log.info(f"[dbo.calendar_summary] Insertando {len(df_summary)} registros...")
+        """Carga el resumen mensual de calendario en calendar_summary."""
+        self.log.info(f"[calendar_summary] Insertando {len(df_summary)} registros...")
         df_summary.to_sql(
             "calendar_summary",
             con=self.engine,
-            schema="dbo",
             if_exists="append",
             index=False,
         )
-        self.log.info("[dbo.calendar_summary] Carga completada.")
+        self.log.info("[calendar_summary] Carga completada.")
         return len(df_summary)
 
     def cargar_todo(self, dataframes: Dict[str, pd.DataFrame]) -> Dict[str, int]:
@@ -421,10 +415,10 @@ class Carga:
             resultados["calendar_summary"] = self.cargar_calendar_summary(dataframes["calendar_summary"])
 
         self.log.info("=" * 60)
-        self.log.info(" RESUMEN GENERAL DE CARGA EN SQL SERVER")
+        self.log.info(" RESUMEN GENERAL DE CARGA EN SQLITE")
         self.log.info("=" * 60)
         for tbl, count in resultados.items():
-            self.log.info(f"  ✓ dbo.{tbl:<18}: {count:>10,} registros")
+            self.log.info(f"  ✓ {tbl:<18}: {count:>10,} registros")
         self.log.info("=" * 60)
 
         return resultados
@@ -485,7 +479,7 @@ if __name__ == "__main__":
 
     loader = Carga()
     if not loader.conectar():
-        print("❌ Error de conexión a SQL Server.")
+        print("❌ Error de conexión a SQLite.")
         sys.exit(1)
 
     print("\n--- Cargando datos procesados desde data/processed/ ---")

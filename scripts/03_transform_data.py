@@ -11,7 +11,7 @@ Descripción:
     2. Aplica limpieza, normalización, derivaciones y categorizaciones
        mediante la clase `Transformacion`.
     3. Exporta los DataFrames limpios a `data/processed/` listos para la
-       carga analítica en SQL Server y exportación a Excel.
+       carga analítica en SQLite y exportación a Excel.
 =============================================================
 """
 
